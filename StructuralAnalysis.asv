@@ -1,3 +1,4 @@
+
 %% Inputs
 clear; close
 
@@ -6,15 +7,31 @@ g = 9.81; %m/s^2, gravitational constant
 rho = 1.225; %kg/m^3, air density
 
 %Wing Geometry
-AR = 10; %aspect ratio
-S = 1.2; %m^2, wing surface area
+AR = 5; %aspect ratio
+S = 0.96; %m^2, wing surface area
 lambda = 0.45; %taper ratio
 
-rho_f = 25.23; %oz/cu-ft, Foam density 
+rho_f = 25.23; %oz/cu-ft, Foam density, potentially 40 
 rho_f = rho_f* 1.00115; %oz/cu-ft to kg/m^3
 
+%Horizontal Tail Geometry
+AR_t = 3; %aspect ratio
+S_t = 0.3; %m^2, horizontal stab surface area
+lambda_t = 0.45; %taper ratio
+
+rho_f_t = 25.23; %oz/cu-ft, Foam density, potentially 40 
+rho_f_t = rho_f_t* 1.00115; %oz/cu-ft to kg/m^3
+
+%Vertical Tail Geometry
+AR_tv = 2; %aspect ratio
+S_tv = 0.15; %m^2, vertical stab surface area
+lambda_tv = 0.45; %taper ratio
+
+rho_f_tv = 25.23; %oz/cu-ft, Foam density, potentially 40 
+rho_f_tv = rho_f_tv* 1.00115; %oz/cu-ft to kg/m^3
+
 %Spar properties
-E = 7200; %MPa
+E = 7200; %MPa 
 I = 169412 * 0.001^4; %m^4, derived from spar geometry
 J = 169412 * 0.001^4; %m^4, derived from spar geometry
 ymax = 0.02; %m, distance from neutral axis
@@ -27,14 +44,14 @@ I_b = 169412 * 0.001^4; %m^4, derived from spar geometry
 J_b = 169412 * 0.001^4; %m^4, derived from spar geometry
 ymax_b = 0.02; %m, distance from neutral axis
 r_b = 0.02; %m, torsional "radius" from centroid
+rho_boom = 0.046; %kg/m, 10cm x 10cm square
 
 %Aircraft Geometry
-s = 0.3; %m, empennage aero center to wing aero center
-s_cg = 0.05; %m, cg to wing aero center (cg behind aero center)
+s = 0.3; %m, empennage cp to wing cp
+s_cg = 0.05; %m, cg to wing cp (cg behind cp)
 
 %Forces
 L_S = 25; %N/m^2, wing loading
-m = 2; %kg, from mass properties
 L_min = 2; %N, turning
 L_max = 10;%N, turning
 L_e = 1; %N, empennage lift
@@ -42,14 +59,25 @@ L_e = 1; %N, empennage lift
 %Limits
 d_max = 0.02; %m, max tip deflection
 
+%masses from spreadsheet
+m_payload = 0.7881; %kg
 
 
 %% Derived Inputs
 b = sqrt(S*AR); %m, span
+m_boom = rho_boom * b; %kg, constant
 cbar = sqrt(S/AR); %m, mean chord
 
 cr = 2*S/(b*(1+lambda));
 ct = cr * lambda;
+
+bt = sqrt(S_t*AR_t);
+crt = 2*S_t/(bt*(1+lambda_t));
+ctt = crt*lambda_t;
+
+btv = sqrt(S_tv*AR_tv);
+crtv = 2*S_tv/(btv*(1+lambda_tv));
+cttv = crtv*lambda_tv;
 
 xvec = linspace(0,b/2,10000); %m, x positions along wing starting from root to b/2
 cvec = ((b/2 - xvec)*cr + xvec*ct)*2/b; %m, chord at each x position along wing starting from root to b/2
@@ -61,11 +89,33 @@ L = L_S*S; %N, total lift
 plot(xin,yin);
 a = polyarea(xin,yin); %m^2/m (chord)
 vol = 2*trapz(xvec,a*cvec); %m^3, total wing volume
-m_wing = vol * rho_f; %kg, wing mass (assumes solid x section)
+m_wing = vol * rho_f + rho_boom * b; %kg, wing mass (assumes solid x section)
+
+
+
+%TAIL WEIGHT, HORIZONTAL
+xtvec = linspace(0,bt/2,10000); %m, x positions along tail starting from root to bt/2
+ctvec = ((bt/2 - xtvec)*crt + xtvec*ctt)*2/bt; %m, chord at each x position along tail starting from root to b/2
+
+[~,xtin,ytin]=openfile('naca4412.dat');
+plot(xtin,ytin);
+at = polyarea(xtin,ytin); %m^2/m (chord)
+volt = 2*trapz(xtvec,at*ctvec); %m^3, total tail volume
+
+%TAIL WEIGHT, VERTICAL
+xtvvec = linspace(0,btv,10000); %m, x positions along tail starting from root to btv
+ctvvec = ((btv - xtvvec)*crtv + xtvvec*cttv)/btv; %m, chord at each x position along tail starting from root to b/2
+
+[~,xtin,ytin]=openfile('naca4412.dat');
+plot(xtin,ytin);
+atv = polyarea(xtin,ytin); %m^2/m (chord)
+voltv = trapz(xtvvec,atv*ctvvec); %m^3, total tail volume
+
+m_tail = volt * rho_f_t + voltv * rho_f_tv + btv* rho_boom + bt * rho_boom; %kg, tail horizontal mass (assumes solid x section)
 %%
 %empennage boom forces
-W = m*g;
-x_bvec = linspace(0,s,10000); %m, boom coord sys, origin at aero center of wing
+W = m_guess*g;
+x_bvec = linspace(0,s,10000); %m, boom coord sys, origin at cp of wing
 V_boom = zeros(10000,1);
 idx = find(x_bvec>s_cg,1);
 V_boom(1:idx) = L;
@@ -100,7 +150,10 @@ fplot(@(x) ((b/2 - x)*cr + x*ct)*2/b, [0 b/2])
 xlim([0 b/2]);
 ylim([0 cr]);
 
-wvec = cvec * L_S; %N/m, lift distribution. Maybe e
+%wvec = cvec * L_S; %N/m, rectangular lift distribution, do not use
+w0 = 4*L/(pi*b);
+wvec = w0 * sqrt(1 - (xvec/(0.5*b)).^2);%N/m, elliptical lift distribution
+
 
 Vvec = cumtrapz(xvec,wvec); %N
 Vvec = flip(Vvec);
@@ -146,6 +199,10 @@ T_boom = (L_max - L_min)*0.2; %Nm, torque due to turn %more fidelity into center
 sigma_max_boom = max(M_boom) * ymax_b/I_b * 10^-6; %MPa, max compressive/tensile at root
 
 tau_max_boom =T_boom * r_b/J_b * 10^-6; %MPa, max shear due to torsion
+
+%% Mass
+
+m_total = m_wing + m_tail + m_boom + m_payload;
 %% Outputs
 
 fprintf('Wing Tip deflection is %f m \n', umax)
@@ -154,15 +211,16 @@ fprintf('Max Boom shear stress is %f MPa\n', tau_max)
 fprintf('Max Boom deflection is %f m \n', u_bmax)
 fprintf('Max Boom tensile/compressive stress is %f MPa\n', sigma_max_boom)
 fprintf('Max Boom shear stress is %f MPa\n', tau_max_boom)
+fprintf('Total mass is %f kg\n', m_total)
 %fprintf('Max shear stress is %f', sigma_max)
 
 
 
 
-function [n,xin,yin] = openfile(yaboi)
+function [n,xin,yin] = openfile(file)
     % Read camber line x and y coordinate data from file ?camber.dat?
     % and place in vectors xin and yin
-    fid = fopen(yaboi);
+    fid = fopen(file);
     n = fscanf(fid,'%10f',1); %length of airfoil vectors
     data = fscanf(fid,'%10f %10f \n', [2,n]);
     fclose(fid);
